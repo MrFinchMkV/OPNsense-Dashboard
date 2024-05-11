@@ -1,0 +1,102 @@
+---
+
+- name: OPNsense-Dashboard
+  hosts: opns_dashboard
+  gather_facts: false
+
+  vars:
+    opns_db_base_dir: /srv/docker/opns-dashboard
+    opns_db_timezone: Europe/Berlin
+    opns_db_graylog_root_username: default_admin
+    opns_db_graylog_root_password:
+    opns_db_grafana_admin_user: default_admin
+    opns_db_grafana_admin_password:
+    opns_db_maxmind_account_id:
+    opns_db_maxmind_licence_key:
+    opns_db_local_user:
+
+  tasks:
+    - name: Create application directory
+      ansible.builtin.file:
+        state: directory
+        path: "{{ opns_db_base_dir }}"
+        mode: '0755'
+
+    - name: Get compose file
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/bsmithio/OPNsense-Dashboard/master/docker-compose.yaml
+        dest: "{{ opns_db_base_dir }}/compose.yml"
+        mode: '0644'
+
+    - name: Change lines
+      ansible.builtin.lineinfile:
+        path: "{{ opns_db_base_dir }}/compose.yml"
+        line: "{{ item.line }}"
+        search_string: "{{ item.search_string }}"
+      loop:
+        - { search_string: "version: '3'", line: "\n" }
+        - { search_string: "ES_JAVA_OPTS=", line: "      - \"ES_JAVA_OPTS=-Xms1024m -Xmx1024m\"" }
+        - { search_string: "GRAYLOG_TIMEZONE=CST6CDT", line: "      - GRAYLOG_TIMEZONE={{ opns_db_timezone }}" }
+        - { search_string: "ROOT_TIMEZONE=CST6CDT", line: "      - ROOT_TIMEZONE={{ opns_db_timezone }}" }
+        - { search_string: "CST6CDT", line: "      - TZ={{ opns_db_timezone }}" }
+        - { search_string: "CST6CDT", line: "      - TZ={{ opns_db_timezone }}" }
+        - { search_string: "CST6CDT", line: "      - TZ={{ opns_db_timezone }}" }
+        - { search_string: "CST6CDT", line: "      - TZ={{ opns_db_timezone }}" }
+        - { search_string: "CST6CDT", line: "      - TZ={{ opns_db_timezone }}" }
+        - { search_string: "Username is", line: "      - GRAYLOG_ROOT_USERNAME={{ opns_db_graylog_root_username }}" }
+        - { search_string: "GRAYLOG_ROOT_PASSWORD_SHA2", line: "      - GRAYLOG_ROOT_PASSWORD_SHA2={{ opns_db_graylog_root_password }}" }
+        - { search_string: "GF_SECURITY_ADMIN_USER", line: "      - GF_SECURITY_ADMIN_USER={{ opns_db_grafana_admin_user }}" }
+        - { search_string: "GF_SECURITY_ADMIN_PASSWORD", line: "      - GF_SECURITY_ADMIN_PASSWORD={{ opns_db_grafana_admin_password }}" }
+
+    - name: Start OPNsense-Dashboard
+      community.docker.docker_compose_v2:
+        project_src: "{{ opns_db_base_dir }}"
+
+    - name: Get Maxmind database
+      ansible.builtin.get_url:
+        url: https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz
+        url_username: "{{ opns_db_maxmind_account_id }}"
+        url_password: "{{ opns_db_maxmind_licence_key }}"
+        dest: /tmp/GeoLite2-Country.tar.gz
+        mode: '0644'
+
+    - name: Extract Maxmind database
+      ansible.builtin.unarchive:
+        src: /tmp/GeoLite2-Country.tar.gz
+        dest: /tmp
+        remote_src: true
+
+    - name: Get Maxmind database path
+      ansible.builtin.find:
+        paths: /tmp
+        patterns: '*.mmdb'
+        file_type: file
+        recurse: true
+      register: reg_find
+
+    - name: Copy Maxmind database to volume
+      ansible.builtin.copy:
+        src: "{{ reg_find.files[0].path }}"
+        dest: /var/lib/docker/volumes/opns-dashboard_graylog_data/_data/data/
+        remote_src: true
+        owner: 1100
+        group: 1100
+        mode: '0644'
+
+    - name: Download OPNsense-pack.json
+      delegate_to: localhost
+      become: true
+      become_user: "{{ opns_db_local_user }}"
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/bsmithio/OPNsense-Dashboard/master/config/OPNsense-pack.json
+        dest: $HOME/Downloads
+        mode: '0644'
+
+    - name: Download OPNsense-Grafana-Dashboard.json
+      delegate_to: localhost
+      become: true
+      become_user: "{{ opns_db_local_user }}"
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/bsmithio/OPNsense-Dashboard/master/OPNsense-Grafana-Dashboard.json
+        dest: $HOME/Downloads
+        mode: '0644'
